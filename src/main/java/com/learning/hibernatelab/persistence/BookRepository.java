@@ -1,4 +1,6 @@
 package com.learning.hibernatelab.persistence;
 
-public class BookRepository {
+import org.springframework.data.jpa.repository.JpaRepository;
+
+public interface BookRepository extends JpaRepository<Book, Long> {
 }

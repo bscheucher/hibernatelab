@@ -28,7 +28,7 @@ dependencies {
     implementation("org.springframework.modulith:spring-modulith-starter-jpa")
     compileOnly("org.projectlombok:lombok")
     developmentOnly("org.springframework.boot:spring-boot-devtools")
-    developmentOnly("org.springframework.boot:spring-boot-docker-compose")
+    testAndDevelopmentOnly("org.springframework.boot:spring-boot-docker-compose")
     runtimeOnly("org.postgresql:postgresql")
     runtimeOnly("org.springframework.modulith:spring-modulith-runtime")
     annotationProcessor("org.projectlombok:lombok")

@@ -1,11 +1,22 @@
 spring:
   application:
     name: hibernatelab
+  docker:
+    compose:
+      skip:
+        # Use the compose-managed Postgres for @SpringBootTest too, instead of
+        # the default (skip in tests, which assumes Testcontainers). Harmless in
+        # production: docker-compose support is a test/dev-only dependency.
+        in-tests: false
   jpa:
+    # Flyway owns the schema; Hibernate only validates its mappings against it.
+    hibernate:
+      ddl-auto: validate
     properties:
-     hibernate:
+      hibernate:
         format_sql: true
-  logging:
-      level:
-        org.hibernate.SQL: DEBUG
-        org.hibernate.orm.jdbc.bind: TRACE   # shows bound parameters (Hibernate 6)
+
+logging:
+  level:
+    org.hibernate.SQL: DEBUG
+    org.hibernate.orm.jdbc.bind: TRACE   # shows bound parameters (Hibernate 6)

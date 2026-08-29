@@ -70,12 +70,14 @@ PGPASSWORD=secret psql -h localhost -p 38881 -U myuser -d mydatabase
 
 ## Example queries
 
-### Books with their authors, editors, and tags
+### Books with their authors, editors, publisher, and tags
 
-Each relationship is a separate many-to-many, so every table is `LEFT JOIN`ed
-(books with no author/editor/tag still appear) and collapsed with
-`string_agg(DISTINCT ...)`. The `DISTINCT` is important: without it the multiple
-join tables multiply each other's rows and names get duplicated.
+Authors (Autor), editors (Herausgeber), and tags are separate many-to-many
+relationships, so each is `LEFT JOIN`ed (books with none still appear) and
+collapsed with `string_agg(DISTINCT ...)`. The `DISTINCT` is important: without
+it the multiple join tables multiply each other's rows and names get duplicated.
+The publisher (Verlag) is a plain many-to-one on `book.publisher_id`, so it just
+joins directly and goes in `GROUP BY`.
 
 ```sql
 SELECT
@@ -83,25 +85,28 @@ SELECT
     b.title,
     string_agg(DISTINCT a.name, ', ') AS authors,
     string_agg(DISTINCT e.name, ', ') AS editors,
+    p.name                            AS publisher,
     string_agg(DISTINCT t.name, ', ') AS tags
 FROM book b
 LEFT JOIN author_book ab ON ab.book_id = b.id
 LEFT JOIN author a       ON a.id = ab.author_id
 LEFT JOIN editor_book eb ON eb.book_id = b.id
 LEFT JOIN editor e       ON e.id = eb.editor_id
+LEFT JOIN publisher p    ON p.id = b.publisher_id
 LEFT JOIN book_tag bt    ON bt.book_id = b.id
 LEFT JOIN tag t          ON t.id = bt.tag_id
-GROUP BY b.id, b.title
+GROUP BY b.id, b.title, p.name
 ORDER BY b.id;
 ```
 
 Example output:
 
 ```
- id |            title             |   authors    |    editors     |         tags
-----+------------------------------+--------------+----------------+----------------------
-  2 | Effective Java               | Joshua Bloch | Addison-Wesley | best-practices, java
-  3 | Java Concurrency in Practice | Brian Goetz  | Addison-Wesley | concurrency, java
+            title             |    authors    |    editors    |   publisher    |         tags
+------------------------------+---------------+---------------+----------------+----------------------
+ Effective Java               | Joshua Bloch  | Lisa Friendly | Addison-Wesley | best-practices, java
+ Java Concurrency in Practice | Brian Goetz   | Lisa Friendly | Addison-Wesley | concurrency, java
+ Learning SQL                 | Alan Beaulieu |               | O'Reilly       | databases, sql
 ```
 
 ### Authors with their books

@@ -25,8 +25,8 @@ class BookPublisherRelationTest {
 
     @Test
     void assignPublisherToBook() {
-        // Unique names so the test doesn't collide with data already in the
-        // shared database (publisher.name is unique).
+        // Unique names keep the test isolated from data already in the shared
+        // database and keep the assertions below exact.
         String suffix = UUID.randomUUID().toString();
         String bookTitle = "Effective Java " + suffix;
         String publisherName = "Addison-Wesley " + suffix;

@@ -2,6 +2,7 @@ package com.learning.hibernatelab.persistence;
 
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -24,12 +25,18 @@ class EditorBookRelationTest {
 
     @Test
     void addEditorToBook() {
+        // Unique names so the test doesn't collide with any data already in the
+        // shared database (editor.name is unique as of migration V4).
+        String suffix = UUID.randomUUID().toString();
+        String bookTitle = "Effective Java " + suffix;
+        String editorName = "Addison-Wesley " + suffix;
+
         Book book = new Book();
-        book.setTitle("Effective Java");
+        book.setTitle(bookTitle);
         book = bookRepository.save(book);
 
         Editor editor = new Editor();
-        editor.setName("Addison-Wesley");
+        editor.setName(editorName);
         // Editor is the owning side of the many-to-many, so the link is set here.
         editor.getBooks().add(book);
         Editor savedEditor = editorRepository.save(editor);
@@ -42,11 +49,11 @@ class EditorBookRelationTest {
         Book reloaded = bookRepository.findById(book.getId()).orElseThrow();
         assertThat(reloaded.getEditors())
                 .extracting(Editor::getName)
-                .containsExactly("Addison-Wesley");
+                .containsExactly(editorName);
 
         Editor reloadedEditor = editorRepository.findById(savedEditor.getId()).orElseThrow();
         assertThat(reloadedEditor.getBooks())
                 .extracting(Book::getTitle)
-                .containsExactly("Effective Java");
+                .containsExactly(bookTitle);
     }
 }

@@ -68,6 +68,42 @@ PGPASSWORD=secret psql -h localhost -p 38881 -U myuser -d mydatabase
 | `\x`             | toggle expanded (row-per-line) output|
 | `\q`             | quit                                 |
 
+## Example queries
+
+### Books with their authors, editors, and tags
+
+Each relationship is a separate many-to-many, so every table is `LEFT JOIN`ed
+(books with no author/editor/tag still appear) and collapsed with
+`string_agg(DISTINCT ...)`. The `DISTINCT` is important: without it the multiple
+join tables multiply each other's rows and names get duplicated.
+
+```sql
+SELECT
+    b.id,
+    b.title,
+    string_agg(DISTINCT a.name, ', ') AS authors,
+    string_agg(DISTINCT e.name, ', ') AS editors,
+    string_agg(DISTINCT t.name, ', ') AS tags
+FROM book b
+LEFT JOIN author_book ab ON ab.book_id = b.id
+LEFT JOIN author a       ON a.id = ab.author_id
+LEFT JOIN editor_book eb ON eb.book_id = b.id
+LEFT JOIN editor e       ON e.id = eb.editor_id
+LEFT JOIN book_tag bt    ON bt.book_id = b.id
+LEFT JOIN tag t          ON t.id = bt.tag_id
+GROUP BY b.id, b.title
+ORDER BY b.id;
+```
+
+Example output:
+
+```
+ id |            title             |   authors    |    editors     |         tags
+----+------------------------------+--------------+----------------+----------------------
+  2 | Effective Java               | Joshua Bloch | Addison-Wesley | best-practices, java
+  3 | Java Concurrency in Practice | Brian Goetz  | Addison-Wesley | concurrency, java
+```
+
 ## Notes
 
 - Flyway owns the schema; the tables (`author`, `author_book`, `book`,

@@ -1,6 +1,11 @@
 package com.learning.hibernatelab.persistence;
 
-import jakarta.persistence.*;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.OneToMany;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -10,20 +15,15 @@ import java.util.Set;
 @Entity
 @Getter
 @Setter
-public class Author {
+public class Publisher {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    // People's names are not unique — two different authors can share a name.
+    @Column(unique = true)
     private String name;
 
-    @ManyToMany
-    @JoinTable(
-            name = "author_book",
-            joinColumns = @JoinColumn(name = "author_id"),
-            inverseJoinColumns = @JoinColumn(name = "book_id")
-    )
+    @OneToMany(mappedBy = "publisher")
     private Set<Book> books = new HashSet<>();
 }

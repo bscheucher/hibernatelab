@@ -15,6 +15,7 @@ public class Editor {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+    // Editor (Herausgeber) is a person — names are not unique.
     private String name;
 
 

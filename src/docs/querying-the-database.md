@@ -104,6 +104,33 @@ Example output:
   3 | Java Concurrency in Practice | Brian Goetz  | Addison-Wesley | concurrency, java
 ```
 
+### Authors with their books
+
+Walks the `author_book` join table. Swap `author`/`author_book`/`author_id` for
+`editor`/`editor_book`/`editor_id` to get the same view for editors.
+
+```sql
+SELECT
+    a.id,
+    a.name AS author,
+    string_agg(DISTINCT b.title, ', ' ORDER BY b.title) AS books
+FROM author a
+LEFT JOIN author_book ab ON ab.author_id = a.id
+LEFT JOIN book b         ON b.id = ab.book_id
+GROUP BY a.id, a.name
+ORDER BY a.id;
+```
+
+Example output:
+
+```
+ id |    author     |            books
+----+---------------+------------------------------
+  1 | Joshua Bloch  | Effective Java
+  2 | Brian Goetz   | Java Concurrency in Practice
+  3 | Alan Beaulieu | Learning SQL
+```
+
 ## Notes
 
 - Flyway owns the schema; the tables (`author`, `author_book`, `book`,

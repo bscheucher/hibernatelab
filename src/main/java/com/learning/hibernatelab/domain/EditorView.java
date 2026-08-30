@@ -2,12 +2,12 @@ package com.learning.hibernatelab.domain;
 
 import java.util.List;
 
-public record PublisherView(
+public record EditorView(
         Long id,
         String name,
         List<BookRef> books
 ) {
-    public PublisherView {
+    public EditorView {
         if (books == null) {
             books = List.of();
         } else {

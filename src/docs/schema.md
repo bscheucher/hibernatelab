@@ -102,4 +102,6 @@ duplicate is *rejected*.
 | `V6` | Dropped `publisher.name` uniqueness (a display name is not a natural key). |
 
 See [querying-the-database.md](querying-the-database.md) for how to connect and
-run queries against this schema.
+run queries against this schema, and
+[service-and-web-layers.md](service-and-web-layers.md) for how these ownership
+and uniqueness decisions shape the services and the REST API.

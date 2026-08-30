@@ -400,6 +400,10 @@ because the view's compact constructor made them so. And nothing recurses: a
 `BookRefDto` inside an `AuthorDto` holds only scalars, so Jackson cannot walk
 back to the authors again.
 
+Where each *write* goes — which service may change which relation, and why the
+endpoints are shaped the way they are — is a separate concern from mapping. That
+is [service-and-web-layers.md](service-and-web-layers.md).
+
 ## Common cases
 
 **Renaming and ignoring**

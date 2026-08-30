@@ -74,10 +74,49 @@ public record BookView(
         Long id,
         String title,
         String description,
-        String publisherName,
-        List<String> authorNames,
-        List<String> tagNames) {}
+        PublisherRef publisher,
+        List<AuthorRef> authors,
+        List<EditorRef> editors,
+        List<String> tagNames
+) {
+    public BookView {
+        if (authors == null) {
+            authors = List.of();
+        } else {
+            authors = List.copyOf(authors);
+        }
+
+        // ... same for editors and tagNames
+    }
+}
 ```
+
+Relations resolve to small **reference records** rather than to entities or to
+other views:
+
+```java
+public record AuthorRef(Long id, String name) {}
+public record BookRef(Long id, String title) {}
+```
+
+A ref holds only scalars, never a collection. That is what keeps the views
+acyclic — `Author` → `Book` → `Author` would otherwise recurse forever, in the
+mapper and again in Jackson. Carrying the `id` matters because `author.name`,
+`editor.name` and `publisher.name` are all deliberately non-unique (migrations
+`V5` and `V6`), so a bare name cannot identify a row. `tagNames` is the
+exception: `tag.name` *is* unique (`V4`), so plain strings lose nothing.
+
+That `public BookView {` with no parameter list is a **compact constructor**, a
+record-only form. Java declares the parameters for you from the record header,
+and assigns each field from its parameter once the body finishes — so assigning
+to the bare `authors` inside the body changes what lands in the field.
+(Writing `this.authors = …` there is a compile error.)
+
+The normalisation is worth the lines. Records are only *shallowly* immutable, so
+without `List.copyOf` a caller could mutate the list after construction and
+change what the view reports. And the `List.of()` branch replaces the `null` that
+MapStruct passes for an empty relation, so consumers never have to null-check
+`authors()`. Refs need no compact constructor — they hold only scalars.
 
 The mapper is an interface in the same package as its target type:
 
@@ -86,6 +125,8 @@ package com.learning.hibernatelab.domain;
 
 import com.learning.hibernatelab.persistence.Author;
 import com.learning.hibernatelab.persistence.Book;
+import com.learning.hibernatelab.persistence.Editor;
+import com.learning.hibernatelab.persistence.Publisher;
 import com.learning.hibernatelab.persistence.Tag;
 import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
@@ -93,17 +134,17 @@ import org.mapstruct.Mapping;
 @Mapper
 public interface BookMapper {
 
-    @Mapping(target = "publisherName", source = "publisher.name")
-    @Mapping(target = "authorNames",   source = "authors")
-    @Mapping(target = "tagNames",      source = "tags")
+    @Mapping(target = "tagNames", source = "tags")
     BookView toView(Book book);
 
     List<BookView> toViews(List<Book> books);
 
-    // Used implicitly to turn Set<Author> into List<String>.
-    default String authorName(Author author) {
-        return author.getName();
-    }
+    // Found by MapStruct whenever it needs one of these conversions.
+    AuthorRef toRef(Author author);
+
+    EditorRef toRef(Editor editor);
+
+    PublisherRef toRef(Publisher publisher);
 
     default String tagName(Tag tag) {
         return tag.getName();
@@ -115,12 +156,16 @@ Points worth noting:
 
 - `id`, `title` and `description` need no annotation — names match, so they are
   mapped automatically.
-- `publisher.name` is **nested source navigation**. MapStruct null-checks the
-  intermediate `publisher`, which matters here because `publisher_id` is
-  nullable.
+- `publisher`, `authors` and `editors` need none either. The names match, and
+  MapStruct finds the `toRef` methods on this same interface to convert each
+  element. Overloading `toRef` is fine — it resolves by parameter type.
+- Only `tagNames` is annotated, because the name differs from the source
+  property `tags`.
 - `toViews` needs no body. Given `toView`, MapStruct writes the loop.
-- The `default` methods are ordinary Java. MapStruct spots that it needs an
-  `Author` → `String` conversion and calls `authorName` for each element.
+- The `default` method is ordinary Java. MapStruct spots that it needs a
+  `Tag` → `String` conversion and calls `tagName` for each element.
+- The generated code null-checks `publisher` before calling `toRef`, so a book
+  with no publisher yields a null `publisher()` rather than an exception.
 
 Inject it like any bean:
 
@@ -161,7 +206,7 @@ Two rules follow:
    book, then one per collection, per book. Use an entity graph:
 
    ```java
-   @EntityGraph(attributePaths = {"publisher", "authors", "tags"})
+   @EntityGraph(attributePaths = {"publisher", "authors", "editors", "tags"})
    Optional<Book> findWithDetailsById(Long id);
    ```
 
@@ -254,11 +299,13 @@ class BookMapperTest {
     private final BookMapper mapper = new BookMapperImpl();
 
     @Test
-    void mapsPublisherAndAuthorNames() {
+    void mapsPublisherAndAuthorsToRefs() {
         Publisher publisher = new Publisher();
+        publisher.setId(7L);
         publisher.setName("Manning");
 
         Author author = new Author();
+        author.setId(3L);
         author.setName("Christian Bauer");
 
         Book book = new Book();
@@ -269,8 +316,8 @@ class BookMapperTest {
         BookView view = mapper.toView(book);
 
         assertThat(view.title()).isEqualTo("Hibernate in Action");
-        assertThat(view.publisherName()).isEqualTo("Manning");
-        assertThat(view.authorNames()).containsExactly("Christian Bauer");
+        assertThat(view.publisher()).isEqualTo(new PublisherRef(7L, "Manning"));
+        assertThat(view.authors()).containsExactly(new AuthorRef(3L, "Christian Bauer"));
     }
 
     @Test
@@ -278,10 +325,22 @@ class BookMapperTest {
         Book book = new Book();
         book.setTitle("Untitled");
 
-        assertThat(mapper.toView(book).publisherName()).isNull();
+        BookView view = mapper.toView(book);
+
+        assertThat(view.publisher()).isNull();
+        assertThat(view.authors()).isEmpty();   // never null, thanks to the compact constructor
     }
 }
 ```
 
-Keep at least one test for the null-relation case — that is where nested source
-navigation either saves you or surprises you.
+Two things are worth a test of their own. **The null-relation case** — a book
+with no publisher — because that is where the generated null checks either save
+you or surprise you. And **empty collections**, to pin down that the compact
+constructor turns MapStruct's `null` into an empty list.
+
+Comparing whole refs with `isEqualTo` works because records get `equals` for
+free, which is a quiet argument for using them here.
+
+Ordering, though, is not something to assert on. The source collections are
+`HashSet`s, so `authors()` comes back in unspecified order. Either sort in the
+mapper or assert with `containsExactlyInAnyOrder`.

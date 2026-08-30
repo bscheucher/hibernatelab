@@ -1,6 +1,7 @@
 package com.learning.hibernatelab.web;
 
 import com.learning.hibernatelab.domain.AuthorService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -45,7 +46,7 @@ public class AuthorController {
     }
 
     @PostMapping
-    public ResponseEntity<AuthorDto> create(@RequestBody NameRequest request) {
+    public ResponseEntity<AuthorDto> create(@Valid @RequestBody NameRequest request) {
         AuthorDto created = dtoMapper.toDto(authorService.create(request.name()));
         return ResponseEntity.created(URI.create("/api/authors/" + created.id())).body(created);
     }

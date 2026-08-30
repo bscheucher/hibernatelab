@@ -1,6 +1,7 @@
 package com.learning.hibernatelab.web;
 
 import com.learning.hibernatelab.domain.TagService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -60,7 +61,7 @@ public class TagController {
      * coin flip against concurrent callers.
      */
     @PostMapping
-    public ResponseEntity<TagDto> create(@RequestBody NameRequest request) {
+    public ResponseEntity<TagDto> create(@Valid @RequestBody NameRequest request) {
         TagDto tag = dtoMapper.toDto(tagService.findOrCreate(request.name()));
         return ResponseEntity.created(URI.create("/api/tags/" + tag.id())).body(tag);
     }

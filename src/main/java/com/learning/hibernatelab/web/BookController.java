@@ -1,6 +1,7 @@
 package com.learning.hibernatelab.web;
 
 import com.learning.hibernatelab.domain.BookService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -45,13 +46,13 @@ public class BookController {
     }
 
     @PostMapping
-    public ResponseEntity<BookDto> create(@RequestBody BookRequest request) {
+    public ResponseEntity<BookDto> create(@Valid @RequestBody BookRequest request) {
         BookDto created = dtoMapper.toDto(bookService.create(request.title(), request.description()));
         return ResponseEntity.created(URI.create("/api/books/" + created.id())).body(created);
     }
 
     @PutMapping("/{id}")
-    public BookDto update(@PathVariable Long id, @RequestBody BookRequest request) {
+    public BookDto update(@PathVariable Long id, @Valid @RequestBody BookRequest request) {
         return dtoMapper.toDto(bookService.update(id, request.title(), request.description()));
     }
 

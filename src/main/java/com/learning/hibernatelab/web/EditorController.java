@@ -1,6 +1,7 @@
 package com.learning.hibernatelab.web;
 
 import com.learning.hibernatelab.domain.EditorService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -38,7 +39,7 @@ public class EditorController {
     }
 
     @PostMapping
-    public ResponseEntity<EditorDto> create(@RequestBody NameRequest request) {
+    public ResponseEntity<EditorDto> create(@Valid @RequestBody NameRequest request) {
         EditorDto created = dtoMapper.toDto(editorService.create(request.name()));
         return ResponseEntity.created(URI.create("/api/editors/" + created.id())).body(created);
     }

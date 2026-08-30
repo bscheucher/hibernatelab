@@ -1,6 +1,7 @@
 package com.learning.hibernatelab.web;
 
 import com.learning.hibernatelab.domain.PublisherService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -54,13 +55,13 @@ public class PublisherController {
     }
 
     @PostMapping
-    public ResponseEntity<PublisherDto> create(@RequestBody NameRequest request) {
+    public ResponseEntity<PublisherDto> create(@Valid @RequestBody NameRequest request) {
         PublisherDto created = dtoMapper.toDto(publisherService.create(request.name()));
         return ResponseEntity.created(URI.create("/api/publishers/" + created.id())).body(created);
     }
 
     @PutMapping("/{id}")
-    public PublisherDto rename(@PathVariable Long id, @RequestBody NameRequest request) {
+    public PublisherDto rename(@PathVariable Long id, @Valid @RequestBody NameRequest request) {
         return dtoMapper.toDto(publisherService.rename(id, request.name()));
     }
 

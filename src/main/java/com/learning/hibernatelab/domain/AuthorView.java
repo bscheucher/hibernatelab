@@ -1,4 +1,9 @@
 package com.learning.hibernatelab.domain;
 
-public class AuthorView {
-}
+import java.util.List;
+
+public record AuthorView (
+        Long id,
+        String name,
+        List<String> bookTitles
+){}

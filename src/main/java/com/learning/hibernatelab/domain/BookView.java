@@ -1,4 +1,11 @@
 package com.learning.hibernatelab.domain;
 
-public class BookView {
-}
+import java.util.List;
+
+public record BookView(
+        Long id,
+        String title,
+        String description,
+        String publisherName,
+        List<String> authorNames,
+        List<String> tagNames) {}

@@ -43,6 +43,7 @@ dependencies {
 
 tasks.withType<JavaCompile> {
     options.compilerArgs.add("-Amapstruct.defaultComponentModel=spring")
+    options.compilerArgs.add("-Amapstruct.defaultInjectionStrategy=constructor")
 }
 ```
 
@@ -58,6 +59,14 @@ The `defaultComponentModel=spring` argument makes every generated mapper a
 `@Component`, so mappers can be constructor-injected like any other bean. Without
 it you would need `Mappers.getMapper(BookMapper.class)` or
 `@Mapper(componentModel = "spring")` on each interface.
+
+`defaultInjectionStrategy=constructor` decides how a mapper receives *other*
+mappers it delegates to via `uses`. MapStruct's default is an `@Autowired` field,
+so the generated class keeps a public no-arg constructor that leaves the delegate
+null — fine under Spring, a `NullPointerException` anywhere else. With this line
+the delegate becomes a constructor parameter instead: the usual Spring
+convention, and the compiler now refuses to build a mapper without its delegates
+rather than letting one exist half-initialised.
 
 If you ever declare a `@Mapper` in *test* sources, mirror the processor entries
 onto `testAnnotationProcessor` as well.
@@ -118,7 +127,8 @@ change what the view reports. And the `List.of()` branch replaces the `null` tha
 MapStruct passes for an empty relation, so consumers never have to null-check
 `authors()`. Refs need no compact constructor — they hold only scalars.
 
-The mapper is an interface in the same package as its target type:
+Every view mapper needs at least one entity-to-ref conversion, so they live in
+one interface rather than being repeated:
 
 ```java
 package com.learning.hibernatelab.domain;
@@ -127,24 +137,41 @@ import com.learning.hibernatelab.persistence.Author;
 import com.learning.hibernatelab.persistence.Book;
 import com.learning.hibernatelab.persistence.Editor;
 import com.learning.hibernatelab.persistence.Publisher;
+import org.mapstruct.Mapper;
+
+@Mapper
+public interface RefMapper {
+
+    BookRef toRef(Book book);
+
+    AuthorRef toRef(Author author);
+
+    EditorRef toRef(Editor editor);
+
+    PublisherRef toRef(Publisher publisher);
+}
+```
+
+Overloading `toRef` is fine — MapStruct resolves by parameter type.
+
+A mapper is then an interface in the same package as its target type, pulling in
+`RefMapper` with `uses`:
+
+```java
+package com.learning.hibernatelab.domain;
+
+import com.learning.hibernatelab.persistence.Book;
 import com.learning.hibernatelab.persistence.Tag;
 import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
 
-@Mapper
+@Mapper(uses = RefMapper.class)
 public interface BookMapper {
 
     @Mapping(target = "tagNames", source = "tags")
     BookView toView(Book book);
 
     List<BookView> toViews(List<Book> books);
-
-    // Found by MapStruct whenever it needs one of these conversions.
-    AuthorRef toRef(Author author);
-
-    EditorRef toRef(Editor editor);
-
-    PublisherRef toRef(Publisher publisher);
 
     default String tagName(Tag tag) {
         return tag.getName();
@@ -157,15 +184,31 @@ Points worth noting:
 - `id`, `title` and `description` need no annotation — names match, so they are
   mapped automatically.
 - `publisher`, `authors` and `editors` need none either. The names match, and
-  MapStruct finds the `toRef` methods on this same interface to convert each
-  element. Overloading `toRef` is fine — it resolves by parameter type.
+  MapStruct finds the `toRef` methods on `RefMapper` to convert each element.
 - Only `tagNames` is annotated, because the name differs from the source
   property `tags`.
 - `toViews` needs no body. Given `toView`, MapStruct writes the loop.
 - The `default` method is ordinary Java. MapStruct spots that it needs a
   `Tag` → `String` conversion and calls `tagName` for each element.
-- The generated code null-checks `publisher` before calling `toRef`, so a book
-  with no publisher yields a null `publisher()` rather than an exception.
+- A book with no publisher yields a null `publisher()` rather than an exception —
+  but note *where* that null check lives. The generated code calls
+  `refMapper.toRef(book.getPublisher())` unconditionally; it is `toRef` itself
+  that returns null for a null argument.
+- The list relations come back in **unspecified order**. The entity side is a
+  `HashSet`, and the generated loop just iterates it, so `authors()` has no
+  stable order from one run to the next. If a caller needs one — a JSON response
+  that should not churn, say — sort in the mapper or in the service; do not
+  assume the order you happen to observe.
+
+The four remaining mappers are the same shape without the `tagNames` line:
+
+```java
+@Mapper(uses = RefMapper.class)
+public interface AuthorMapper {
+    AuthorView toView(Author author);
+    List<AuthorView> toViews(List<Author> authors);
+}
+```
 
 Inject it like any bean:
 
@@ -183,6 +226,18 @@ public class BookService {
     }
 }
 ```
+
+### Why declare the refs at all?
+
+It is tempting to leave the `toRef` methods out entirely — and everything still
+compiles if you do. That is the trap. When no declared method converts `Book` to
+`BookRef`, MapStruct silently generates a `protected bookToBookRef` into *every*
+implementation that needs one. Four mappers, four private copies of the same
+conversion, none of them callable, testable, or overridable.
+
+Declaring `RefMapper` turns that invisible generated code into one named thing
+with one place to change. The rule of thumb: if two mappers need the same
+conversion, give it a home.
 
 ## The JPA trap: map inside the transaction
 
@@ -248,12 +303,17 @@ never map incoming collections onto an entity's collections this way — replaci
 the `Set` instance breaks Hibernate's dirty tracking. Handle relations
 explicitly in the service.
 
-**Composing mappers** — `uses` lets one mapper delegate to another:
+**Composing mappers** — `uses` lets one mapper delegate to another, which is how
+every view mapper here reaches `RefMapper`:
 
 ```java
-@Mapper(uses = AuthorMapper.class)
+@Mapper(uses = RefMapper.class)
 public interface BookMapper { ... }
 ```
+
+The generated implementation receives the delegate as a constructor-injected
+Spring bean and calls it — `refMapper.toRef(author)` — rather than rolling its
+own copy. It takes several: `uses = {RefMapper.class, DateMapper.class}`.
 
 ## Catching mistakes at compile time
 
@@ -273,6 +333,32 @@ options.compilerArgs.add("-Amapstruct.unmappedTargetPolicy=ERROR")
 Note that records make this stricter automatically: every constructor component
 must be supplied, so a forgotten field is a compile error regardless.
 
+### What no policy will catch
+
+`unmappedTargetPolicy` inspects the *target*. A mapper whose **source** type is
+wrong is still a perfectly valid mapper, so it compiles in silence:
+
+```java
+// Compiles. Generates a useless TagView → TagView copy.
+TagView toView(TagView tagView);
+
+// Compiles. Generates a useless EditorRef → EditorRef copy.
+EditorRef toRef(EditorRef editor);
+```
+
+What makes this hard to spot is that the mapping you *meant* still appears in the
+implementation — as a private helper, generated so that `toViews` has something
+to call — so the generated file looks broadly correct at a glance. Meanwhile the
+public method you would actually call does nothing useful, and there is no way to
+map a single entity at all.
+
+Nothing in the build warns about either one, and nothing will until real calling
+code exists. What catches it is a service that tries to hand the method an
+entity — `bookRepository.findById(id).map(tagMapper::toView)` does not compile
+against `toView(TagView)`. Until a caller exists, read the generated impl: a
+public method whose parameter type is a `domain` record, sitting next to a
+private helper that takes the entity, is the signature bug in plain sight.
+
 ## Reading the generated code
 
 The generated implementations are plain, readable Java — the fastest way to
@@ -289,58 +375,18 @@ the `annotationProcessor` entries above. If it is present but its methods return
 empty objects, the target's properties were invisible at processing time, which
 usually means the Lombok binding is missing.
 
-## Testing a mapper
+Once mappers delegate, two greps tell you whether the wiring took:
 
-A mapper needs no database. Instantiate the generated class directly:
+```bash
+cd build/generated/sources/annotationProcessor/java/main/com/learning/hibernatelab/domain
 
-```java
-class BookMapperTest {
-
-    private final BookMapper mapper = new BookMapperImpl();
-
-    @Test
-    void mapsPublisherAndAuthorsToRefs() {
-        Publisher publisher = new Publisher();
-        publisher.setId(7L);
-        publisher.setName("Manning");
-
-        Author author = new Author();
-        author.setId(3L);
-        author.setName("Christian Bauer");
-
-        Book book = new Book();
-        book.setTitle("Hibernate in Action");
-        book.setPublisher(publisher);
-        book.setAuthors(Set.of(author));
-
-        BookView view = mapper.toView(book);
-
-        assertThat(view.title()).isEqualTo("Hibernate in Action");
-        assertThat(view.publisher()).isEqualTo(new PublisherRef(7L, "Manning"));
-        assertThat(view.authors()).containsExactly(new AuthorRef(3L, "Christian Bauer"));
-    }
-
-    @Test
-    void toleratesMissingPublisher() {
-        Book book = new Book();
-        book.setTitle("Untitled");
-
-        BookView view = mapper.toView(book);
-
-        assertThat(view.publisher()).isNull();
-        assertThat(view.authors()).isEmpty();   // never null, thanks to the compact constructor
-    }
-}
+grep -n "refMapper" *Impl.java    # conversions delegated to RefMapper
+grep -n "protected " *Impl.java   # conversions generated locally instead
 ```
 
-Two things are worth a test of their own. **The null-relation case** — a book
-with no publisher — because that is where the generated null checks either save
-you or surprise you. And **empty collections**, to pin down that the compact
-constructor turns MapStruct's `null` into an empty list.
-
-Comparing whole refs with `isEqualTo` works because records get `equals` for
-free, which is a quiet argument for using them here.
-
-Ordering, though, is not something to assert on. The source collections are
-`HashSet`s, so `authors()` comes back in unspecified order. Either sort in the
-mapper or assert with `containsExactlyInAnyOrder`.
+In the second list, a `protected bookToBookRef` is the smell from *Why declare
+the refs at all?* — some conversion has no declared method. The
+`protected bookSetToBookRefList` loops are a different thing and are expected:
+MapStruct always inlines the collection loop into the mapper that needs it, and
+each iteration calls `refMapper.toRef`. Sharing removes the duplicated element
+conversion, not the loops.

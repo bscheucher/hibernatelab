@@ -52,6 +52,7 @@ dependencyManagement {
 
 tasks.withType<JavaCompile> {
     options.compilerArgs.add("-Amapstruct.defaultComponentModel=spring")
+    options.compilerArgs.add("-Amapstruct.defaultInjectionStrategy=constructor")
 }
 
 tasks.withType<Test> {

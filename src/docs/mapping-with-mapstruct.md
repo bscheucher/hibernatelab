@@ -14,8 +14,8 @@ The layers each have their own representation of a book:
 
 ```mermaid
 flowchart LR
-    Book["Book<br/><i>persistence</i>"] -->|mapper| BookView["BookView<br/><i>domain</i>"]
-    BookView -->|mapper| BookDto["BookDto<br/><i>web</i>"]
+    Book["Book<br/><i>persistence</i>"] -->|BookMapper| BookView["BookView<br/><i>domain</i>"]
+    BookView -->|DtoMapper| BookDto["BookDto<br/><i>web</i>"]
     BookDto -->|Jackson| JSON["JSON response"]
 ```
 
@@ -222,10 +222,14 @@ public class BookService {
 
     @Transactional(readOnly = true)
     public Optional<BookView> findById(Long id) {
-        return bookRepository.findById(id).map(bookMapper::toView);
+        return bookRepository.findWithPublisherById(id).map(bookMapper::toView);
     }
 }
 ```
+
+Two things in those four lines carry the whole next section: the mapper call is
+inside the transaction, and the repository method was chosen for what the mapper
+is about to touch.
 
 ### Why declare the refs at all?
 
@@ -253,24 +257,148 @@ public BookView findById(Long id) {
 }
 ```
 
-Two rules follow:
+Two rules follow.
 
-1. **Call the mapper inside `@Transactional`**, i.e. in the service, never in the
-   controller. If the session is closed the lazy collections cannot be read.
-2. **Fetch what the mapper will touch**, or you get N+1 queries — one for the
-   book, then one per collection, per book. Use an entity graph:
+### 1. Call the mapper inside `@Transactional`
 
-   ```java
-   @EntityGraph(attributePaths = {"publisher", "authors", "editors", "tags"})
-   Optional<Book> findWithDetailsById(Long id);
-   ```
+Mapping belongs in the service, never in the controller. If the session is
+closed the lazy collections cannot be read. This is why every service method
+that returns a view is annotated, `readOnly = true` for the queries, and why the
+controllers receive finished views and never touch an entity, a repository or a
+transaction.
 
-   Note that fetching two `@ManyToMany` collections in one query produces a
-   cartesian product. For lists, prefer separate queries or Hibernate's
-   `@BatchSize` over one giant join.
+### 2. Fetch what the mapper will touch
 
-MapStruct cannot warn you about either of these — the generated code just calls
-getters. The cost is in what those getters do.
+Otherwise you get N+1 — one query for the book, then one per collection, per
+book. The right tool depends on how many relations the view needs, and this
+project has both shapes.
+
+**One collection: use an entity graph.** `AuthorView`, `EditorView`, `TagView`
+and `PublisherView` each need only `books`, so the repository join-fetches it.
+One collection is one join, and there is nothing for it to multiply against:
+
+```java
+@Override
+@EntityGraph(attributePaths = "books")
+List<Author> findAll();
+
+@EntityGraph(attributePaths = "books")
+Optional<Author> findWithBooksById(Long id);
+```
+
+**Several collections: do not.** `BookView` needs `publisher`, `authors`,
+`editors` and `tags`. One graph covering all four would join three many-to-manys
+at once and hand Hibernate the cartesian product of them. So `BookRepository`
+fetches only the `@ManyToOne`:
+
+```java
+@Override
+@EntityGraph(attributePaths = "publisher")
+List<Book> findAll();
+```
+
+and the three collections are batch-fetched on the entity instead:
+
+```java
+@BatchSize(size = 50)
+@ManyToMany(mappedBy = "books")
+private Set<Author> authors = new HashSet<>();
+```
+
+Fetching the `@ManyToOne` is not optional busywork: `@ManyToOne` is **EAGER by
+default**, so without that graph a list of books costs one extra query per book.
+
+### What that actually produces
+
+`GET /api/books` over six books, read from the SQL log with
+`logging.level.org.hibernate.SQL: DEBUG`:
+
+```sql
+-- 1. books + publisher, one query (the entity graph)
+select b1_0.id, b1_0.description, p1_0.id, p1_0.name, b1_0.title
+from book b1_0 left join publisher p1_0 on p1_0.id=b1_0.publisher_id
+
+-- 2-4. one batched query per collection (@BatchSize)
+select ... from book_tag    t1_0 join tag    t1_1 ... where t1_0.book_id = any (?)
+select ... from author_book a1_0 join author a1_1 ... where a1_0.book_id = any (?)
+select ... from editor_book e1_0 join editor e1_1 ... where e1_0.book_id = any (?)
+```
+
+**Four queries, and the count does not grow with the number of books** — six or
+fifty, still four, because the batch size is 50. The `= any (?)` is the tell:
+Hibernate collected the ids of every book in the session and fetched each
+collection for all of them at once.
+
+The four is measured. The counterfactual is arithmetic: strip `@BatchSize` and
+each collection falls back to one query per book, so the same request becomes
+1 + 3 × 6 = 19, and it grows with every book added. Drop the entity graph too
+and the eager `publisher` adds six more.
+
+Note also `left join`, not an inner join, so a book with no publisher still
+appears — `publisher_id` is nullable, and V5 made it `ON DELETE SET NULL`.
+
+MapStruct cannot warn you about any of this — the generated code just calls
+getters. The cost is in what those getters do, and the only way to know is to
+turn on the SQL log and count.
+
+## Mapping to the web layer
+
+The domain view is not the REST contract. `DtoMapper` converts one to the other,
+and the DTOs mirror the views — including the reference records:
+
+```java
+public record BookRefDto(Long id, String title) {}
+public record AuthorRefDto(Long id, String name) {}
+```
+
+The duplication is the point. `BookDto` is published to clients; `BookView` is
+internal. Renaming a field in the view becomes a mapper change here rather than
+a breaking change for everyone consuming the API.
+
+Unlike `domain`, this layer has **one mapper for everything**:
+
+```java
+@Mapper
+public interface DtoMapper {
+
+    AuthorDto toDto(AuthorView view);
+    BookDto toDto(BookView view);
+    // ...
+
+    List<AuthorDto> toAuthorDtos(List<AuthorView> views);
+    List<BookDto> toBookDtos(List<BookView> views);
+    // ...
+
+    BookRefDto toDto(BookRef ref);
+    AuthorRefDto toDto(AuthorRef ref);
+}
+```
+
+That is not a contradiction of *Why declare the refs at all?*. `RefMapper` exists
+in `domain` because five mappers needed the same conversion and would otherwise
+have got five private copies. Here there is only one mapper, so the ref
+conversions already have exactly one home.
+
+Two details worth knowing:
+
+- The list methods need **distinct names**. Erasure makes `List<AuthorView>` and
+  `List<BookView>` the same signature, so `toDto` cannot be overloaded for them
+  the way it can for the single-object methods.
+- The DTOs need **no compact constructor**. The views they are mapped from have
+  already replaced nulls with empty lists, so `authors()` on a `BookDto` is never
+  null either — normalising twice would only hide where it happens.
+
+The result over the wire, for a book with nothing attached:
+
+```json
+{ "id": 80, "title": "Untitled Draft", "description": null,
+  "publisher": null, "authors": [], "editors": [], "tagNames": [] }
+```
+
+`publisher` is null because that is a real state; the collections are `[]`
+because the view's compact constructor made them so. And nothing recurses: a
+`BookRefDto` inside an `AuthorDto` holds only scalars, so Jackson cannot walk
+back to the authors again.
 
 ## Common cases
 

@@ -11,6 +11,7 @@ import jakarta.persistence.ManyToMany;
 import jakarta.persistence.ManyToOne;
 import lombok.Getter;
 import lombok.Setter;
+import org.hibernate.annotations.BatchSize;
 
 import java.util.HashSet;
 import java.util.Set;
@@ -32,9 +33,15 @@ public class Book {
     @JoinColumn(name = "publisher_id")
     private Publisher publisher;
 
+    // The three collections below are batch-fetched rather than join-fetched.
+    // BookMapper touches all three, and one entity graph covering them would
+    // be a three-way cartesian product; @BatchSize turns the N+1 into a
+    // bounded handful of IN queries instead.
+    @BatchSize(size = 50)
     @ManyToMany(mappedBy = "books")
     private Set<Author> authors = new HashSet<>();
 
+    @BatchSize(size = 50)
     @ManyToMany
     @JoinTable(
             name = "book_tag",
@@ -42,6 +49,7 @@ public class Book {
             inverseJoinColumns = @JoinColumn(name = "tag_id"))
     private Set<Tag> tags = new HashSet<>();
 
+    @BatchSize(size = 50)
     @ManyToMany(mappedBy = "books")
     private Set<Editor> editors = new HashSet<>();
 }
